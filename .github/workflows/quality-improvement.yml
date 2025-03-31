@@ -1,0 +1,71 @@
+name: AI-Powered Quality Improvement
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'  # Jalankan setiap Senin jam 00:00 UTC
+  workflow_dispatch:     # Memungkinkan pemicu manual
+
+jobs:
+  analyze-and-improve:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install openai requests pytest pytest-cov
+
+      - name: Analisis SonarQube
+        uses: SonarSource/sonarqube-scan-action@v1
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+      - name: Ambil masalah SonarQube
+        id: fetch-issues
+        run: |
+          curl -u ${{ secrets.SONAR_TOKEN }}: "${{ secrets.SONAR_HOST_URL }}/api/issues/search?projectKeys=${{ github.repository }}&statuses=OPEN,CONFIRMED&types=CODE_SMELL,BUG,VULNERABILITY" > sonar_issues.json
+          
+          curl -u ${{ secrets.SONAR_TOKEN }}: "${{ secrets.SONAR_HOST_URL }}/api/measures/component?component=${{ github.repository }}&metricKeys=coverage,lines_to_cover,uncovered_lines" > code_coverage.json
+
+      - name: Hasilkan peningkatan dengan SambaNova GenAI
+        id: generate-fixes
+        run: python scripts/generate_improvements.py
+        env:
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+
+      - name: Terapkan perbaikan dan jalankan tes
+        run: |
+          python scripts/apply_fixes.py
+          # Jalankan test jika ada
+          if [ -d "tests" ]; then
+            pytest --cov=.
+          fi
+
+      - name: Buat Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: 'Peningkatan kualitas dengan bantuan AI'
+          title: 'Peningkatan kualitas otomatis dengan bantuan AI'
+          body: |
+            PR ini berisi peningkatan yang dihasilkan oleh AI berdasarkan analisis SonarQube.
+            
+            **Ringkasan peningkatan:**
+            * Test case baru untuk meningkatkan coverage
+            * Perbaikan code smells
+            * Perbaikan potensi bug
+            * Peningkatan dokumentasi
+            
+            Silakan tinjau perubahan dengan seksama sebelum menggabungkan.
+          branch: ai-quality-improvements
+          base: main
