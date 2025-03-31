@@ -77,33 +77,3 @@ jobs:
           jq '.total' sonar_issues.json
           echo "Coverage:"
           jq '.component.measures[] | select(.metric=="coverage")' code_coverage.json
-
-      - name: Generate quality improvements with SambaNova GenAI
-        id: generate-improvements
-        run: python scripts/generate_improvements.py
-        env:
-          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
-
-      - name: Create summary report
-        run: |
-          echo "## Hasil Analisis Kualitas Kode" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          if [ -f "improvement_report.json" ]; then
-            echo "### Perbaikan yang Direkomendasikan" >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
-            cat improvement_report.json >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Hasil lengkap tersedia di SonarQube." >> $GITHUB_STEP_SUMMARY
-
-      - name: Upload test artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: test-improvements
-          path: |
-            test_improvements.json
-            code_fixes.json
-            improvement_report.json
