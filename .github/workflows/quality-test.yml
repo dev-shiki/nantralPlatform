@@ -1,138 +1,124 @@
-name: Quality Test
+name: GenAI Quality Tests
 
 on:
-  # Jalankan manual dari GitHub UI
-  workflow_dispatch:
-  # Jalankan pada setiap push ke branch feature
+  # Jalankan workflow ini pada push ke branch apapun
   push:
-    branches:
-      - 'feature/**'
-      - 'fix/**'
+    branches: [ "**" ]
+  # Jalankan workflow ini saat pull request ke branch apapun
+  pull_request:
+    branches: [ "**" ]
+  # Memungkinkan menjalankan workflow ini secara manual dari tab Actions
+  workflow_dispatch:
 
 jobs:
+  changes:
+    name: Check changes
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+            frontend:
+              - 'frontend/**'
+            src:
+              - 'src/**'
+
   backend-quality:
-    name: Backend Quality Test
+    name: Backend Quality for GenAI
+    needs: changes
+    if: ${{ needs.changes.outputs.backend == 'true' || needs.changes.outputs.src == 'true' }}
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: backend  # Sesuai struktur nantralPlatform
-
+        working-directory: backend
     steps:
-      - name: Pull latest commit
+      - name: Checkout repository
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # Dibutuhkan untuk SonarQube
+          fetch-depth: 0  # Riwayat commit dibutuhkan untuk SonarQube
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version-file: backend/.python-version
-          cache: pipenv
-          cache-dependency-path: backend/Pipfile.lock
+          python-version: '3.10'
 
       - name: Install dependencies
         run: |
-          curl https://raw.githubusercontent.com/pypa/pipenv/master/get-pipenv.py | python
-          pipenv verify
-          pipenv sync --dev
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov pylint
 
-      - name: Linter
+      # Sesuaikan dengan struktur backend yang ada di repositori Anda
+      - name: Run tests with coverage
         run: |
-          pipenv run lint
-
-      - name: Run tests and collect coverage
-        run: |
-          pipenv run test:coverage
-          pipenv run coverage xml
+          pytest --cov=. --cov-report=xml:../coverage.xml
 
       - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@master
+        uses: SonarSource/sonarcloud-github-action@master
         with:
-          projectBaseDir: backend
-          args: >
-            -Dsonar.projectKey=${{ github.repository_owner }}_${{ github.event.repository.name }}
-            -Dsonar.projectName=${{ github.repository_owner }}_${{ github.event.repository.name }}
+          projectBaseDir: .
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-      - name: Export test results
-        run: |
-          mkdir -p ../test-results
-          if [ -f ".coverage" ]; then
-            cp .coverage ../test-results/
-          fi
-          if [ -f "coverage.xml" ]; then
-            cp coverage.xml ../test-results/
-          fi
-
   frontend-quality:
-    name: Frontend Quality Test
+    name: Frontend Quality for GenAI
+    needs: changes
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: frontend  # Sesuai struktur nantralPlatform
-
+        working-directory: frontend
     steps:
-      - name: Clone the repository
+      - name: Checkout repository
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # Dibutuhkan untuk SonarQube
+          fetch-depth: 0
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version-file: frontend/.nvmrc
-          cache: npm
+          node-version: '16'
+          cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Types test
-        run: npm run types
+      - name: Run tests with coverage
+        run: npm test -- --coverage
 
-      - name: Lint test
-        run: npm run lint
-
-      - name: Unit test
-        run: npm run jest -- --coverage
-
-      - name: Run SonarQube scan
-        uses: SonarSource/sonarqube-scan-action@master
+      - name: SonarQube Scan
+        uses: SonarSource/sonarcloud-github-action@master
         with:
-          projectBaseDir: frontend/
-          args: >
-            -Dsonar.projectKey=${{ github.repository_owner }}_${{ github.event.repository.name }}_frontend
-            -Dsonar.projectName=${{ github.repository_owner }}_${{ github.event.repository.name }}_frontend
+          projectBaseDir: frontend
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-  summary:
-    name: Quality Summary
+  final-quality:
+    name: Final Quality Check
     needs: [backend-quality, frontend-quality]
-    if: always()
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
-      - name: Create summary report
+      - name: Check previous jobs status
         run: |
-          echo "## Hasil Analisis Kualitas Kode" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          if [[ "${{ needs.backend-quality.result }}" == "success" ]]; then
-            echo "✅ Backend test berhasil" >> $GITHUB_STEP_SUMMARY
+          status=$(echo "${{ needs.backend-quality.result }} ${{ needs.frontend-quality.result }}" | tr '[:upper:]' '[:lower:]')
+          if [[ "$status" == *"failure"* ]]; then
+            echo "One or more previous jobs failed."
+            exit 1
           else
-            echo "❌ Backend test gagal" >> $GITHUB_STEP_SUMMARY
+            echo "All previous jobs succeeded or were skipped."
+            exit 0
           fi
-          
-          if [[ "${{ needs.frontend-quality.result }}" == "success" ]]; then
-            echo "✅ Frontend test berhasil" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Frontend test gagal" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Hasil lengkap tersedia di SonarQube." >> $GITHUB_STEP_SUMMARY
