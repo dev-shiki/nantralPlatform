@@ -50,30 +50,27 @@ jobs:
           cache: pipenv
           cache-dependency-path: backend/Pipfile.lock
       
+      - name: Install Pipenv
+        run: |
+          python -m pip install --upgrade pip
+          pip install pipenv
+      
       - name: Install dependencies
         run: |
-          curl https://raw.githubusercontent.com/pypa/pipenv/master/get-pipenv.py | python
-          pipenv verify
           pipenv sync --dev
       
-      - name: Run linter (if available)
+      - name: Run linter
         run: |
-          if pipenv run lint &>/dev/null; then
-            pipenv run lint
-          else
-            echo "Linter command not found, skipping..."
-          fi
-        continue-on-error: true
+          pipenv run lint
+        continue-on-error: true  # Lanjutkan meskipun lint gagal
       
       - name: Run tests with coverage
         run: |
-          if pipenv run test:coverage &>/dev/null; then
-            pipenv run test:coverage
-            pipenv run coverage xml
-          else
-            echo "Specific test command not found, using pytest directly..."
-            pipenv run pytest --cov=. --cov-report=xml:coverage.xml
-          fi
+          # Jalankan coverage dengan Django test
+          pipenv run test:coverage
+          
+          # Generate XML report for SonarQube
+          pipenv run coverage xml
       
       - name: SonarQube Scan
         uses: SonarSource/sonarcloud-github-action@master
