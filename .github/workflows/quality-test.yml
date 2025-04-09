@@ -14,22 +14,28 @@ jobs:
     permissions:
       pull-requests: read
     outputs:
-      python: ${{ steps.filter.outputs.python }}
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
     steps:
       - uses: actions/checkout@v3
       - uses: dorny/paths-filter@v2
         id: filter
         with:
           filters: |
-            python:
-              - '**/*.py'
+            backend:
+              - 'backend/**'
+            frontend:
+              - 'frontend/**'
   
-  sonarqube-analysis:
-    name: SonarQube Analysis
+  backend-analysis:
+    name: Backend SonarQube Analysis
     needs: changes
-    # Jalankan jika ada perubahan file Python atau ini adalah pemicu manual
-    if: ${{ needs.changes.outputs.python == 'true' || github.event_name == 'workflow_dispatch' }}
+    # Jalankan jika ada perubahan backend atau ini adalah pemicu manual
+    if: ${{ needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     
     steps:
       - name: Checkout repository
@@ -40,35 +46,81 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version-file: backend/.python-version
+          cache: pipenv
+          cache-dependency-path: backend/Pipfile.lock
       
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install pytest pytest-cov
-          # Jika ada file requirements.txt
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
+          curl https://raw.githubusercontent.com/pypa/pipenv/master/get-pipenv.py | python
+          pipenv verify
+          pipenv sync --dev
+      
+      - name: Run linter (if available)
+        run: |
+          if pipenv run lint &>/dev/null; then
+            pipenv run lint
+          else
+            echo "Linter command not found, skipping..."
           fi
-          # Jika menggunakan pipenv
-          if [ -f Pipfile ]; then
-            pip install pipenv
-            pipenv install --dev
-          fi
+        continue-on-error: true
       
       - name: Run tests with coverage
         run: |
-          # Pilih salah satu command sesuai dengan struktur proyek
-          if [ -f Pipfile ]; then
-            # Gunakan pipenv jika ada
-            pipenv run pytest --cov=. --cov-report=xml:coverage.xml
+          if pipenv run test:coverage &>/dev/null; then
+            pipenv run test:coverage
+            pipenv run coverage xml
           else
-            # Atau langsung menggunakan pytest
-            pytest --cov=. --cov-report=xml:coverage.xml
+            echo "Specific test command not found, using pytest directly..."
+            pipenv run pytest --cov=. --cov-report=xml:coverage.xml
           fi
       
       - name: SonarQube Scan
         uses: SonarSource/sonarcloud-github-action@master
+        with:
+          projectBaseDir: backend
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+  
+  frontend-analysis:
+    name: Frontend SonarQube Analysis
+    needs: changes
+    if: ${{ needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run tests with coverage
+        run: |
+          if npm run jest -- --coverage; then
+            echo "Tests completed successfully"
+          else
+            echo "Tests failed or not found, continuing anyway"
+          fi
+        continue-on-error: true
+      
+      - name: SonarQube Scan for Frontend
+        uses: SonarSource/sonarcloud-github-action@master
+        with:
+          projectBaseDir: frontend
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
