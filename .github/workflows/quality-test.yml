@@ -59,7 +59,7 @@ jobs:
       # Sesuaikan dengan struktur backend yang ada di repositori Anda
       - name: Run tests with coverage
         run: |
-          pytest --cov=. --cov-report=xml:../coverage.xml
+          pytest tests/ --cov=src --cov-report=xml:coverage.xml
 
       - name: SonarQube Scan
         uses: SonarSource/sonarcloud-github-action@master
