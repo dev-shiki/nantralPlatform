@@ -1,124 +1,74 @@
-name: GenAI Quality Tests
+name: SambaNova SonarQube Quality Analysis
 
 on:
-  # Jalankan workflow ini pada push ke branch apapun
-  push:
-    branches: [ "**" ]
-  # Jalankan workflow ini saat pull request ke branch apapun
+  # Jalankan pada pull request
   pull_request:
-    branches: [ "**" ]
-  # Memungkinkan menjalankan workflow ini secara manual dari tab Actions
+    branches: [ main, master ]
+  # Memungkinkan pemicu manual dari tab Actions
   workflow_dispatch:
 
 jobs:
   changes:
-    name: Check changes
+    name: Check changed files
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
     outputs:
-      backend: ${{ steps.filter.outputs.backend }}
-      frontend: ${{ steps.filter.outputs.frontend }}
+      python: ${{ steps.filter.outputs.python }}
     steps:
       - uses: actions/checkout@v3
       - uses: dorny/paths-filter@v2
         id: filter
         with:
           filters: |
-            backend:
-              - 'backend/**'
-            frontend:
-              - 'frontend/**'
-            src:
-              - 'src/**'
-
-  backend-quality:
-    name: Backend Quality for GenAI
+            python:
+              - '**/*.py'
+  
+  sonarqube-analysis:
+    name: SonarQube Analysis
     needs: changes
-    if: ${{ needs.changes.outputs.backend == 'true' || needs.changes.outputs.src == 'true' }}
+    # Jalankan jika ada perubahan file Python atau ini adalah pemicu manual
+    if: ${{ needs.changes.outputs.python == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # Riwayat commit dibutuhkan untuk SonarQube
-
+          fetch-depth: 0  # Dibutuhkan untuk mendapatkan semua commit history untuk SonarQube
+      
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-
+      
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-cov pylint
-
-      # Sesuaikan dengan struktur backend yang ada di repositori Anda
-      - name: Run tests with coverage
-        run: |
-          pytest tests/ --cov=src --cov-report=xml:coverage.xml
-
-      - name: SonarQube Scan
-        uses: SonarSource/sonarcloud-github-action@master
-        with:
-          projectBaseDir: .
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-
-  frontend-quality:
-    name: Frontend Quality for GenAI
-    needs: changes
-    if: ${{ needs.changes.outputs.frontend == 'true' }}
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '16'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run tests with coverage
-        run: npm test -- --coverage
-
-      - name: SonarQube Scan
-        uses: SonarSource/sonarcloud-github-action@master
-        with:
-          projectBaseDir: frontend
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-
-  final-quality:
-    name: Final Quality Check
-    needs: [backend-quality, frontend-quality]
-    if: ${{ always() }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check previous jobs status
-        run: |
-          status=$(echo "${{ needs.backend-quality.result }} ${{ needs.frontend-quality.result }}" | tr '[:upper:]' '[:lower:]')
-          if [[ "$status" == *"failure"* ]]; then
-            echo "One or more previous jobs failed."
-            exit 1
-          else
-            echo "All previous jobs succeeded or were skipped."
-            exit 0
+          pip install pytest pytest-cov
+          # Jika ada file requirements.txt
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
           fi
+          # Jika menggunakan pipenv
+          if [ -f Pipfile ]; then
+            pip install pipenv
+            pipenv install --dev
+          fi
+      
+      - name: Run tests with coverage
+        run: |
+          # Pilih salah satu command sesuai dengan struktur proyek
+          if [ -f Pipfile ]; then
+            # Gunakan pipenv jika ada
+            pipenv run pytest --cov=. --cov-report=xml:coverage.xml
+          else
+            # Atau langsung menggunakan pytest
+            pytest --cov=. --cov-report=xml:coverage.xml
+          fi
+      
+      - name: SonarQube Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
